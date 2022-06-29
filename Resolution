@@ -1,0 +1,216 @@
+import matplotlib as mpl
+from matplotlib import pyplot
+import numpy as np
+
+## Parametres Van Genuchten
+def thetaFun(psi,pars):
+    if psi>=0.:
+        Se = 1.
+    else:
+        Se=(1+abs(psi*pars['alpha'])**pars['n'])**(-pars['m'])
+    return pars['thetaR']+(pars['thetaS']-pars['thetaR'])*Se
+
+thetaFun=np.vectorize(thetaFun)
+
+def CFun(psi,pars):
+    if psi>=0.:
+        Se=1.
+    else:
+        Se=(1+abs(psi*pars['alpha'])**pars['n'])**(-pars['m'])
+    dSedh=pars['alpha']*pars['m']/(1-pars['m'])*Se**(1/pars['m'])*(1-Se**(1/pars['m']))**pars['m']
+    return Se*pars['Ss']+(pars['thetaS']-pars['thetaR'])*dSedh
+
+CFun = np.vectorize(CFun)
+
+def KFun(psi,pars):
+    if psi>=0.:
+        Se=1.
+    else:
+        Se=(1+abs(psi*pars['alpha'])**pars['n'])**(-pars['m'])
+    return pars['Ks']*Se**pars['neta']*(1-(1-Se**(1/pars['m']))**pars['m'])**2
+
+KFun = np.vectorize(KFun)
+
+# Parametres a entrer
+def setpars():
+  pars={}
+  pars['thetaR']=float(raw_input("thetaR = "))
+  pars['thetaS']=float(raw_input("thetaS = "))
+  pars['alpha']=float(raw_input("alpha = "))
+  pars['n']=float(raw_input("n = "))
+  pars['m']=1-1/pars['n']
+  pars['Ks']=float(raw_input("Ks = "))
+  pars['neta']=float(raw_input("neta = "))
+  pars['Ss']=float(raw_input("Ss = "))
+  return pars
+
+# Afficher courbes parametres Van Genuchten
+def PlotProps(pars):
+  import numpy as np
+  import pylab as pl
+  psi=np.linspace(-10,2,200)
+  pl.figure
+  pl.subplot(3,1,1)
+  pl.plot(psi,thetaFun(psi,pars))
+  pl.ylabel(r'$\theta(\psi) [-]$')
+  pl.subplot(3,1,2)
+  pl.plot(psi,CFun(psi,pars))
+  pl.ylabel(r'$C(\psi) [1/m]$')
+  pl.subplot(3,1,3)
+  pl.plot(psi,KFun(psi,pars))
+  pl.xlabel(r'$\psi [m]$')
+  pl.ylabel(r'$K(\psi) [m/d]$')
+  pl.show()
+
+# Parametres pour un type de sable
+def HygieneSandstone():
+  pars={}
+  pars['thetaR']=0.05
+  pars['thetaS']=0.25
+  pars['alpha']=0.79
+  pars['n']=10.4
+  pars['m']=1-1/pars['n']
+  pars['Ks']=1.08
+  pars['neta']=0.5
+  pars['Ss']=0.000001
+  return pars
+
+
+
+## Resolution equation de Richards
+
+from matplotlib import pyplot as pl
+import numpy as np
+
+# Import ODE solvers
+from scipy.interpolate import interp1d
+from scipy.integrate import odeint
+
+p = HygieneSandstone()
+
+
+# Equation de Richards
+
+def RichardsModel(psi,t,dz,n,p,qTop,qBot,psiTop,psiBot):
+
+    # Propriete:
+    C = CFun(psi,p)
+
+    q = np.zeros(n+1)
+
+    # Conditions en haut
+    if qTop == []:
+        KTop = KFun(np.zeros(1) + psiTop,p)
+        q[n] = -KTop*((psiTop-psi[n-1])/dz*2+1)
+    else:
+        q[n] = qTop[0]
+
+    # Conditions en bas
+    if qBot == []:
+        if psiBot == []:
+            # Free drainage
+            KBot = KFun(np.zeros(1) + psi[0],p)
+            q[0] = -KBot
+        else:
+            # Type 1 boundary
+            KBot = KFun(np.zeros(1) + psiBot,p)
+            q[0] = -KBot*((psi[0] - psiBot)/dz*2+1.0)
+    else:
+        # Type 2 boundary
+        q[0] = qBot
+
+    # Conditions interieur
+    i = np.arange(0,n-1)
+    Knodes = KFun(psi,p)
+    Kmid = (Knodes[i+1]+Knodes[i])/2.0
+
+    j = np.arange(1,n)
+    q[j] = -Kmid*((psi[i+1] - psi[i])/dz + 1.0)
+
+
+
+    # Continuite
+    i = np.arange(0,n)
+    dpsidt = (-(q[i+1] - q[i])/dz)/C
+
+    return dpsidt
+
+
+
+## Definition des conditions initiales et mise en place de la grille
+
+# Conditions aux limites
+qTop = [-1]
+qBot = []
+psiTop = []
+psiBot = []
+
+# Grille spatiale
+dz = 0.02
+ProfileDepth = 1
+z = np.arange(dz/2.0,ProfileDepth,dz)
+n = z.size
+
+# Grille temporelle
+t = np.linspace(0,0.4,100)
+
+# Conditions initiales
+psi0 = [-1.70 for i in range(n)]
+
+# Resolution
+psi = odeint(RichardsModel,psi0,t,args=(dz,n,p,qTop,qBot,psiTop,psiBot),mxstep=5000000);
+
+
+## Trace des solutions pour differents instants
+# Teneur en eau
+theta = thetaFun(psi,p)
+
+lst = []
+
+pl.rcParams['figure.figsize'] = (10.0, 10.0)
+pl.figure()
+for i in range(t.size):
+    pl.subplot(1,2,1)
+    pl.plot(psi[i,:], z)
+    pl.subplot(1,2,2)
+    pl.plot(theta[i,:], z)
+    lst.append(theta[i])
+
+
+mat = np.matrix(lst)
+data = np.rot90(mat)
+
+
+fig, ax = pyplot.subplots()
+
+nlst = data[-1].tolist()
+malist = []
+
+for i in nlst:
+    for j in i:
+        malist.append(j)
+
+x = [i for i in range(len(malist))]
+y = [malist[i] for i in range(len(malist))]
+
+pyplot.plot(x,y)
+pyplot.ylabel('Teneur en eau')
+pyplot.xlabel('Temps (s)')
+shw = ax.imshow(data, vmin = 0.153, vmax = 0.25)
+
+bar = pyplot.colorbar(shw)
+
+pyplot.xlabel('temps (s)')
+pyplot.ylabel('profondeur (cm)')
+bar.set_label('theta (%)')
+pyplot.show()
+
+
+k = 0
+for i in malist:
+    if i >= 0.24:
+        print(k)
+    else:
+        k+=1
+
+print(malist[0])
